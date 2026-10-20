@@ -667,34 +667,176 @@ fact_article_arr_enriched[
 ]
 ```
 
-## Semantic Search
+## Semantic and Hybrid Search Usage
 
-Article embeddings are generated from:
+The project supports semantic search using article embeddings generated from:
 
 ```text
 title + summary
 ```
 
-using:
+with the model:
 
 ```text
 sentence-transformers/all-MiniLM-L6-v2
 ```
 
-The model produces a fixed-size embedding vector for each article.
+Each article is represented by a 384-dimensional embedding vector.
 
-Semantic search compares a query embedding to article embeddings using cosine similarity.
+Semantic search allows articles to be ranked by meaning rather than exact keyword matches.
+
+### Semantic Search from Python
+
+The reusable function `find_similar_articles()` can be used to search for articles that are semantically similar to a natural-language query.
 
 Example:
 
 ```python
-find_similar_articles(
-    query_text="cloud companies expanding artificial intelligence infrastructure",
-    top_k=5
+from semantic_search import (
+    load_embedding_model,
+    find_similar_articles,
 )
+
+embedding_model = load_embedding_model()
+
+results = find_similar_articles(
+    query_text="companies building generative AI infrastructure",
+    articles_df=fact_article_arr_enriched,
+    embedding_model=embedding_model,
+    top_k=5,
+)
+
+print(results)
 ```
 
-The function returns article IDs and similarity scores ranked from most to least semantically similar.
+The function returns the most similar articles ordered by cosine similarity score.
+
+Conceptually:
+
+```text
+natural-language query
+        ↓
+same embedding model
+        ↓
+query embedding
+        ↓
+cosine similarity against article embeddings
+        ↓
+Top-K semantically similar articles
+```
+
+A higher similarity score indicates that the article is semantically closer to the supplied query.
+
+### Hybrid Search with DuckDB
+
+Hybrid search combines:
+
+1. structured SQL filtering
+2. semantic vector similarity
+
+This allows the pipeline to first restrict the candidate articles using analytical conditions, then rank those candidates by semantic similarity.
+
+Example use case:
+
+```text
+AI-related articles
+published between 2022 and 2024
+ARR > $50M
+semantically similar to:
+"companies building generative AI infrastructure"
+```
+
+The reusable `hybrid_search()` function can be called from Python:
+
+```python
+from duckdb_load import (
+    get_connection,
+    hybrid_search,
+)
+from semantic_search import load_embedding_model
+
+
+con = get_connection()
+embedding_model = load_embedding_model()
+
+try:
+    results = hybrid_search(
+        query_text="companies building generative AI infrastructure",
+        con=con,
+        embedding_model=embedding_model,
+        top_k=5,
+        start_date="2022-01-01",
+        end_date="2025-01-01",
+        min_arr=50_000_000,
+    )
+
+    print(results)
+
+finally:
+    con.close()
+```
+
+The hybrid-search flow is:
+
+```text
+DuckDB structured filters
+-------------------------
+category = AI_ML
+OR industry = AI/ML
+
+published date:
+2022-01-01 <= date < 2025-01-01
+
+ARR:
+> $50M
+
+        ↓
+
+candidate article subset
+
+        ↓
+
+query embedding
+
+        ↓
+
+DuckDB array_cosine_similarity()
+
+        ↓
+
+Top-K semantically similar articles
+```
+
+The underlying SQL uses DuckDB's numeric embedding arrays:
+
+```sql
+SELECT
+    article_id,
+    title,
+    company_name_resolved,
+    published_date_clean,
+    category_clean,
+    industry,
+    arr_usd,
+    array_cosine_similarity(
+        embedding,
+        ?::FLOAT[384]
+    ) AS similarity_score
+FROM fact_article_arr_enriched
+WHERE (
+        category_clean = 'AI_ML'
+        OR industry = 'AI/ML'
+      )
+  AND published_date_clean >= ?::TIMESTAMPTZ
+  AND published_date_clean < ?::TIMESTAMPTZ
+  AND arr_usd > ?
+ORDER BY similarity_score DESC
+LIMIT ?;
+```
+
+The query embedding is generated in Python using the same embedding model used for the articles and passed into DuckDB as a 384-dimensional vector.
+
+This approach keeps structured analytical filtering and semantic ranking in the same local analytical workflow.
 
 ## DuckDB
 
