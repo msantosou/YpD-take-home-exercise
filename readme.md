@@ -21,6 +21,305 @@ The pipeline performs:
 
 The primary analytical grain is one row per `article_id` in the article ARR fact table.
 
+
+## Architecture and Data Flow
+
+The solution is intentionally small enough to run locally, while keeping clear boundaries between ingestion, transformation, modeling, validation, semantic search, and persistence.
+
+```text
+                    ┌──────────────────────────┐
+                    │       Raw Sources        │
+                    │                          │
+                    │ tech_news.csv            │
+                    │ company_metadata.json    │
+                    └────────────┬─────────────┘
+                                 │
+                                 ▼
+                        ┌────────────────┐
+                        │   ingest.py    │
+                        │                │
+                        │ Load CSV/JSON  │
+                        │ Preserve raw   │
+                        │ source fields  │
+                        └───────┬────────┘
+                                │
+                                ▼
+                     ┌─────────────────────┐
+                     │    transform.py     │
+                     │                     │
+                     │ ARR normalization   │
+                     │ Date normalization  │
+                     │ Category mapping    │
+                     │ Company resolution  │
+                     │ Metadata enrichment │
+                     └─────────┬───────────┘
+                               │
+                    ┌──────────┴──────────┐
+                    ▼                     ▼
+             ┌─────────────┐      ┌──────────────────┐
+             │ dim_company │      │ fact_article_arr │
+             └──────┬──────┘      └────────┬─────────┘
+                    │                      │
+                    └──────────┬───────────┘
+                               ▼
+                 ┌───────────────────────────┐
+                 │ fact_article_arr_enriched │
+                 └─────────────┬─────────────┘
+                               │
+                  ┌────────────┼─────────────┐
+                  ▼            ▼             ▼
+      ┌─────────────────┐  ┌────────────┐  ┌────────────────┐
+      │ AI article CSV  │  │ Embeddings │  │ Data Quality   │
+      │ required output │  │ + semantic │  │ validations    │
+      └─────────────────┘  │ search     │  └────────────────┘
+                           └──────┬─────┘
+                                  ▼
+                            ┌──────────┐
+                            │ DuckDB   │
+                            │ SQL +    │
+                            │ vectors  │
+                            └──────────┘
+```
+
+The notebook is used for exploratory profiling and manual testing. The production-like execution path is `src/run_pipeline.py`, which keeps the DataFrames in the same Python process and passes them explicitly between ingestion, transformation, validation, export, and DuckDB-loading stages.
+
+### Main modeled relationships
+
+```text
+dim_company
+    1
+    │
+    │ company_name / company_name_resolved
+    │
+    N
+fact_article_arr
+    │
+    │ same article grain
+    ▼
+fact_article_arr_enriched
+```
+
+`fact_article_arr` uses `article_id` as its grain. A company can therefore have many article-level ARR observations over time.
+
+## Key Design Decisions
+
+### One article fact instead of separate article and ARR facts
+
+The current source provides at most one ARR observation per article, so both entities have the same practical grain. A separate ARR fact would therefore introduce an unnecessary one-to-one relationship.
+
+If future articles could contain multiple companies, multiple ARR values, or multiple financial metrics, the model should evolve toward a separate article dimension/fact and a financial-observation fact.
+
+### ARR as an observation, not company master data
+
+`arr_usd` represents what a specific article reported for a company as of the article publication date.
+
+The model therefore preserves:
+
+- the original source `revenue`
+- the normalized `arr_usd`
+- the article ID
+- the publication date
+- the article URL
+
+This keeps every ARR observation auditable and prevents a reported article value from being silently treated as an authoritative company attribute.
+
+### Pandas rather than Spark
+
+The supplied dataset is small, so distributed processing would add complexity without providing meaningful benefit. The transformation rules are implemented as reusable functions so the same business logic could later move to Spark or another distributed engine if data volume required it.
+
+### Conservative company resolution
+
+Company matching follows:
+
+```text
+normalized exact match
+        ↓
+explicit alias
+        ↓
+conservative fuzzy match
+        ↓
+unresolved
+```
+
+The original source company value is always preserved. An unresolved company is preferable to an incorrect match.
+
+### DuckDB `FLOAT[384]` embeddings
+
+The selected sentence-transformer model produces fixed 384-dimensional embeddings. In DuckDB, embeddings are stored as numeric arrays instead of plain text so native vector operations such as cosine similarity can be used directly.
+
+## Reliability and Data Quality
+
+The pipeline validates model invariants rather than treating successful code execution as sufficient evidence of successful processing.
+
+Important checks include:
+
+- `article_id` is unique and non-null in the article fact
+- `company_name` is unique and non-null in `dim_company`
+- enriched fact row count matches the base fact row count
+- populated ARR values are positive
+- invalid or undisclosed revenue values do not become zero ARR
+- required output columns exist
+- embedding vectors contain 384 values
+- the AI export satisfies all required date, category/industry, and ARR filters
+- AI export records remain traceable to the enriched fact
+- unresolved company matches are identifiable
+
+For the local implementation, modeled outputs are recreated instead of blindly appended. This makes repeated runs deterministic and avoids duplicate records for the same source batch.
+
+In a persistent warehouse, the same behavior would typically be implemented with deterministic business keys and `MERGE`/upsert logic using `article_id`.
+
+## Hybrid Search Flow
+
+Hybrid search combines structured SQL filtering with semantic vector similarity.
+
+```text
+SQL filters
+-----------
+AI-related
+2022-2024
+ARR > $50M
+      │
+      ▼
+candidate article subset
+      │
+      ▼
+query embedding
+      +
+article embeddings
+      │
+      ▼
+cosine similarity
+      │
+      ▼
+Top-K semantically similar articles
+```
+
+Example query:
+
+```text
+companies building generative AI infrastructure
+```
+
+The structured filters ensure the candidates satisfy the requested analytical conditions. Cosine similarity then ranks those candidates by semantic meaning rather than exact keyword overlap.
+
+## Production Evolution
+
+The local implementation intentionally uses lightweight tools, but the logical architecture can scale without changing the core data contracts.
+
+| Local implementation | Production evolution |
+|---|---|
+| CSV / JSON files | S3, ADLS, GCS or another durable object store |
+| Pandas | Spark, Databricks, Glue, or another distributed engine |
+| `run_pipeline.py` | Airflow, Dagster, Prefect, or managed orchestration |
+| CSV modeled outputs | Delta, Iceberg, warehouse tables |
+| Local validations | Automated DQ metrics, alerts, SLAs/SLOs |
+| DuckDB vector search | Vector-capable analytical/search platform |
+
+A production workflow would additionally support:
+
+- incremental processing by deterministic `article_id`
+- backfills using the same transformation logic as normal runs
+- schema-contract validation before transformation
+- monitoring for parse failures, unresolved companies, duplicates, freshness, and runtime
+- explicit versioning of the embedding model and vector index
+
+## Live Review / Presentation Guide
+
+For a 45-minute review, the solution can be presented in roughly 15-20 minutes, leaving the remaining time for discussion and live coding.
+
+Recommended flow:
+
+1. **Problem and objective** — explain ARR history + semantic search.
+2. **Architecture** — walk through ingestion → transformations → modeling → validation → DuckDB.
+3. **Data model** — explain the grains of `dim_company` and `fact_article_arr`.
+4. **Cleaning decisions** — show ARR, date, category, and company-resolution examples.
+5. **Lineage and idempotency** — explain why raw revenue and article references are preserved.
+6. **Data quality** — show key validations and failure conditions.
+7. **Semantic search** — explain `title + summary` → embedding → cosine similarity.
+8. **Hybrid search** — show SQL filters + vector ranking.
+9. **Production evolution** — explain how the local solution would scale.
+10. **Demo** — query ARR history, source lineage, and hybrid search in DuckDB.
+
+Suggested live-demo queries:
+
+### ARR history for one company
+
+```sql
+SELECT
+    company_name_resolved,
+    published_date_clean,
+    arr_usd,
+    title,
+    url
+FROM fact_article_arr_enriched
+WHERE company_name_resolved = 'Snowflake'
+  AND arr_usd IS NOT NULL
+ORDER BY published_date_clean;
+```
+
+### Source lineage
+
+```sql
+SELECT
+    article_id,
+    company_name_resolved,
+    revenue,
+    arr_usd,
+    published_date_clean,
+    url
+FROM fact_article_arr_enriched
+WHERE arr_usd IS NOT NULL
+LIMIT 10;
+```
+
+### Validate AI downstream output
+
+```sql
+SELECT COUNT(*) AS invalid_rows
+FROM ai_articles_enriched
+WHERE NOT (
+    category = 'AI_ML'
+    OR industry = 'AI/ML'
+)
+OR published_date < TIMESTAMPTZ '2022-01-01'
+OR published_date >= TIMESTAMPTZ '2025-01-01'
+OR arr_usd <= 50000000
+OR arr_usd IS NULL;
+```
+
+Expected result:
+
+```text
+invalid_rows = 0
+```
+
+### Hybrid-search example
+
+Use a semantic query such as:
+
+```text
+companies building generative AI infrastructure
+```
+
+with:
+
+```text
+AI-related
+2022-2024
+ARR > $50M
+Top 5 results
+```
+
+The most important design points to be prepared to defend are:
+
+- why the article and ARR observation share one fact at the current grain
+- why ARR is modeled as a source-backed observation
+- why unresolved company names are preserved
+- why Pandas is appropriate for this data volume
+- why DuckDB is appropriate for local analytical and vector querying
+- how idempotency, backfills, schema changes, and observability would work beyond the local batch
+
+
 ## Project Structure
 
 ```text
