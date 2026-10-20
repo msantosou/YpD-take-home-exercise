@@ -1,0 +1,9 @@
+cat << 'EOF' > .gitignore
+.venv_ypd/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.pytest_cache/
+*.duckdb.wal
+.DS_Store
+EOF*.duckdb

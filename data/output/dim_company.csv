@@ -1,0 +1,22 @@
+company_name,founded_year,headquarters,employee_count,industry,is_public,stock_ticker,company_size_category
+OpenAI,2006,"Austin, TX",12793,Data Analytics,False,OPEN,MEDIUM
+Anthropic,2006,"San Francisco, CA",43747,FinTech,False,,LARGE
+Google DeepMind,2017,"Austin, TX",24274,Data Analytics,False,,MEDIUM
+Meta AI,2001,"Seattle, WA",20240,Data Analytics,True,,MEDIUM
+Microsoft,2018,"Austin, TX",48646,Data Analytics,False,,LARGE
+Amazon Web Services,2015,"Berlin, Germany",27826,SaaS,False,,MEDIUM
+Tesla,2008,"London, UK",5691,Cloud Computing,True,,SMALL
+NVIDIA,2017,"London, UK",22031,AI/ML,False,,MEDIUM
+Databricks,2003,"Berlin, Germany",17962,Data Analytics,True,DATA,MEDIUM
+Snowflake,2012,"London, UK",49545,Cloud Computing,True,,LARGE
+Stripe,2002,"Seattle, WA",36348,Data Analytics,True,STRI,LARGE
+Airbnb,1999,"London, UK",19967,Data Analytics,False,,MEDIUM
+Uber,2015,"San Francisco, CA",10144,FinTech,False,UBER,MEDIUM
+SpaceX,2016,"Berlin, Germany",31018,AI/ML,False,,LARGE
+Palantir,2005,"Berlin, Germany",42306,Cloud Computing,True,,LARGE
+Cloudflare,1998,"Austin, TX",4422,Cybersecurity,False,CLOU,SMALL
+MongoDB,2008,"Austin, TX",16952,SaaS,False,MONG,MEDIUM
+Elastic,2016,"San Francisco, CA",24508,Cybersecurity,True,ELAS,MEDIUM
+Confluent,1995,"London, UK",3884,Cloud Computing,False,,SMALL
+DataRobot,2012,"New York, NY",23471,Cloud Computing,True,,MEDIUM
+Scale AI,2003,"Berlin, Germany",23379,AI/ML,False,,MEDIUM
