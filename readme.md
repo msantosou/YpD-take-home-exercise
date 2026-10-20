@@ -736,7 +736,6 @@ The persisted DuckDB database is optional. The CSV exports remain the canonical 
 The modeled datasets support the four analytical requirements of the assignment.
 
 ### ARR observations over time
-
 ```sql
 SELECT
     company_name_resolved AS company_name,
@@ -749,9 +748,10 @@ FROM fact_article_arr_enriched
 WHERE company_name_resolved = 'Snowflake'
   AND arr_usd IS NOT NULL
 ORDER BY published_date_clean;
+```
 
 ### Source lineage for an ARR observation
-
+```sql
 SELECT
     article_id,
     company_name,
@@ -763,9 +763,10 @@ SELECT
     url
 FROM fact_article_arr
 WHERE article_id = '<ARTICLE_ID>';
+```
 
 ### Structured article filtering
-
+```sql
 SELECT
     article_id,
     title,
@@ -782,15 +783,16 @@ WHERE (
   AND published_date_clean >= TIMESTAMPTZ '2022-01-01'
   AND published_date_clean < TIMESTAMPTZ '2025-01-01'
   AND arr_usd > 50000000;
-
+```
 ### Idempotency / duplicate validation
-
+```sql
 SELECT
     article_id,
     COUNT(*) AS record_count
 FROM fact_article_arr
 GROUP BY article_id
 HAVING COUNT(*) > 1;
+```
 
 ## Data Validation
 
