@@ -731,6 +731,67 @@ semantically similar to a supplied query
 
 The persisted DuckDB database is optional. The CSV exports remain the canonical submitted modeled outputs.
 
+## Required Query Patterns
+
+The modeled datasets support the four analytical requirements of the assignment.
+
+### ARR observations over time
+
+```sql
+SELECT
+    company_name_resolved AS company_name,
+    published_date_clean AS observation_date,
+    arr_usd,
+    article_id,
+    title,
+    url
+FROM fact_article_arr_enriched
+WHERE company_name_resolved = 'Snowflake'
+  AND arr_usd IS NOT NULL
+ORDER BY published_date_clean;
+
+### Source lineage for an ARR observation
+
+SELECT
+    article_id,
+    company_name,
+    company_name_resolved,
+    published_date,
+    revenue AS source_revenue,
+    arr_usd,
+    title,
+    url
+FROM fact_article_arr
+WHERE article_id = '<ARTICLE_ID>';
+
+### Structured article filtering
+
+SELECT
+    article_id,
+    title,
+    company_name_resolved,
+    published_date_clean,
+    category_clean,
+    industry,
+    arr_usd
+FROM fact_article_arr_enriched
+WHERE (
+        category_clean = 'AI_ML'
+        OR industry = 'AI/ML'
+      )
+  AND published_date_clean >= TIMESTAMPTZ '2022-01-01'
+  AND published_date_clean < TIMESTAMPTZ '2025-01-01'
+  AND arr_usd > 50000000;
+
+### Idempotency / duplicate validation
+
+SELECT
+    article_id,
+    COUNT(*) AS record_count
+FROM fact_article_arr
+GROUP BY article_id
+HAVING COUNT(*) > 1;
+
 ## Data Validation
 
 Validation includes checks for:
